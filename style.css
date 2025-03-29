@@ -38,6 +38,10 @@ h1, h2 {
     border-radius: 4px;
 }
 
+#channel-input:disabled {
+    background-color: #eee; /* Indicate disabled state */
+}
+
 #connect-button {
     padding: 10px 15px;
     background-color: #4CAF50;
@@ -100,16 +104,13 @@ h1, h2 {
 }
 
 /* Specific styles for status/error messages */
-.status-message, .error-message {
+.status-message {
     background-color: transparent; /* Remove default message background */
     border-left: none; /* Remove default border */
     text-align: center;
     font-style: italic;
     margin: 10px 0;
     padding: 5px;
-}
-
-.status-message {
     color: #1976d2; /* Blue for status */
 }
 
@@ -122,4 +123,6 @@ h1, h2 {
     text-align: left; /* Align error text left for consistency */
     font-style: normal; /* Override italic */
     padding: 8px 12px;
+    white-space: pre-wrap; /* Allow wrapping and preserve line breaks */
+    word-break: break-word; /* Break long words if necessary */
 }
