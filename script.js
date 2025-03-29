@@ -60,7 +60,8 @@ function connectWebSocket(channel) {
             const chatroomId = data.chatroom.id;
             console.log(`Found chatroom ID: ${chatroomId}`);
 
-            ws = new WebSocket(`wss://ws-us2.pusher.com/app/eb1d5f283081a78b932c?protocol=7&client=js&version=7.6.0&flash=false`);
+            // Update the WebSocket URL to try a different cluster
+            ws = new WebSocket(`wss://ws-us-1.pusher.com/app/eb1d5f283081a78b932c?protocol=7&client=js&version=7.6.0&flash=false`);
 
             ws.onopen = () => {
                 console.log("Connected to Kick chat WebSocket.");
@@ -73,13 +74,12 @@ function connectWebSocket(channel) {
                     }
                 }));
 
-                 // Send ping every 30 seconds to keep connection alive
+                // Send ping every 30 seconds to keep connection alive
                 keepAliveInterval = setInterval(() => {
-                     if (ws.readyState === WebSocket.OPEN) {
-                         ws.send(JSON.stringify({ event: "pusher:ping", data: {} }));
-                        // console.log('Sent ping');
-                     }
-                 }, 30000);
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ event: "pusher:ping", data: {} }));
+                    }
+                }, 30000);
             };
 
             ws.onmessage = (event) => {
@@ -92,29 +92,27 @@ function connectWebSocket(channel) {
                 }
 
                 if (data.event === "pusher_internal:subscription_succeeded") {
-                     console.log(`Successfully subscribed to channel: ${data.channel}`);
-                     return;
+                    console.log(`Successfully subscribed to channel: ${data.channel}`);
+                    return;
                 }
 
-
                 if (data.event === "App\\Events\\ChatMessageEvent") {
-                     try {
+                    try {
                         const messageData = JSON.parse(data.data);
                         console.log("Parsed message data:", messageData); // Log parsed message
                         if (messageData.sender && messageData.content) {
-                             displayMessage(messageData.sender.username, messageData.content);
-                         } else {
-                             console.warn("Received message without sender or content:", messageData);
-                         }
-                     } catch (e) {
-                         console.error("Error parsing inner message data:", e, data.data);
-                         displayMessage(null, "Error parsing chat message.", false, true);
-                     }
-                 } else {
+                            displayMessage(messageData.sender.username, messageData.content);
+                        } else {
+                            console.warn("Received message without sender or content:", messageData);
+                        }
+                    } catch (e) {
+                        console.error("Error parsing inner message data:", e, data.data);
+                        displayMessage(null, "Error parsing chat message.", false, true);
+                    }
+                } else {
                     // Log other event types for debugging if needed
                     // console.log("Received unhandled event type:", data.event);
-                 }
-
+                }
             };
 
             ws.onerror = (error) => {
@@ -127,16 +125,14 @@ function connectWebSocket(channel) {
                 console.log("Disconnected from Kick chat.", event.code, event.reason);
                 displayMessage(null, `Disconnected from ${channel}. ${event.reason || ''}`, true);
                 if (keepAliveInterval) clearInterval(keepAliveInterval);
-                 // Optionally try to reconnect or inform the user
+                // Optionally try to reconnect or inform the user
             };
-
         })
         .catch(error => {
             console.error("Error fetching channel ID or connecting:", error);
-            displayMessage(null, `Error: ${error.message}`, false, true);
+            displayMessage(null, `Error connecting: ${error.message}`, false, true);
         });
 }
-
 
 connectButton.addEventListener('click', () => {
     const newChannelName = channelInput.value.trim();
@@ -152,7 +148,6 @@ connectButton.addEventListener('click', () => {
 // if (channelName) {
 //     connectWebSocket(channelName);
 // } else {
-//      displayMessage(null, "Enter a channel name and click Connect.", true);
+//     displayMessage(null, "Enter a channel name and click Connect.", true);
 // }
 displayMessage(null, "Enter a channel name and click Connect.", true);
-
