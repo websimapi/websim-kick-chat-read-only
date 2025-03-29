@@ -60,64 +60,80 @@ function connectWebSocket(channel) {
 
     // Function to process chatroom data and connect WebSocket
     const processChatroomDataAndConnect = (data, sourceUrl) => {
-        console.log(`Received data from ${sourceUrl}. Keys:`, data ? Object.keys(data) : 'null data'); // Log top-level keys
+        console.log(`Processing data received from ${sourceUrl}. Raw data:`, JSON.stringify(data, null, 2)); // Log the raw data structure
 
-        let chatroomObject = null;
         let chatroomId = null;
         let pusherKey = null;
         let pusherHost = null;
         let pusherCluster = null;
+        let foundDetails = false;
 
-        // Try finding the necessary details
-        if (data && data.pusher_details && data.id) { // Case 1: Details are at the top level (e.g., from /chatroom endpoint)
-            console.log("Found pusher_details at the top level.");
-            chatroomObject = data;
-        } else if (data && data.chatroom && data.chatroom.pusher_details && data.chatroom.id) { // Case 2: Details are inside data.chatroom (e.g., from /channel endpoint)
-            console.log("Found pusher_details inside data.chatroom.");
-            console.log("data.chatroom keys:", data.chatroom ? Object.keys(data.chatroom) : 'null data.chatroom'); // Log chatroom keys
-            chatroomObject = data.chatroom;
-        } else {
-             // Log detailed error about missing parts
-             console.error(`Could not find required chatroom or Pusher details in response from ${sourceUrl}.`);
+        // --- Try extracting data ---
+        // Common structure seems to have chatroom details directly or nested
+        // Check if data itself contains the necessary details (like from /chatroom endpoint)
+        if (data && data.id && data.pusher_details && data.pusher_details.host && data.pusher_details.key) {
+            console.log(`Found details directly in data from ${sourceUrl}.`);
+            chatroomId = data.id;
+            pusherKey = data.pusher_details.key;
+            pusherHost = data.pusher_details.host;
+            pusherCluster = data.pusher_details.cluster || null; // Cluster might be optional
+            foundDetails = true;
+        }
+        // Check if data has a 'chatroom' property containing the details (like potentially from /channel endpoint, though recent logs suggest this failed)
+        // Note: The previous logs indicated `data.chatroom` existed but lacked `pusher_details`. This check remains just in case the API structure varies or reverts.
+        else if (data && data.chatroom && data.chatroom.id && data.chatroom.pusher_details && data.chatroom.pusher_details.host && data.chatroom.pusher_details.key) {
+            console.log(`Found details nested under 'chatroom' property in data from ${sourceUrl}.`);
+            chatroomId = data.chatroom.id;
+            pusherKey = data.chatroom.pusher_details.key;
+            pusherHost = data.chatroom.pusher_details.host;
+            pusherCluster = data.chatroom.pusher_details.cluster || null;
+            foundDetails = true;
+        }
+
+        // --- Handle failure to find details ---
+        if (!foundDetails) {
+             console.error(`Could not find required chatroom/Pusher details in the expected structure from ${sourceUrl}.`);
+             // Log detailed missing parts based on the checked structure
              if (!data) {
                  console.error(" -> 'data' is missing or null.");
              } else {
-                 const potentialChatroom = data.chatroom || data; // Check both possible locations
-                 if (!potentialChatroom.id) console.error(" -> Required 'id' is missing.");
-                 if (!potentialChatroom.pusher_details) console.error(" -> Required 'pusher_details' object is missing.");
-                 else { // If pusher_details exists, check host/key
-                     if (!potentialChatroom.pusher_details.host) console.error(" -> 'pusher_details.host' is missing.");
-                     if (!potentialChatroom.pusher_details.key) console.error(" -> 'pusher_details.key' is missing.");
-                     // Cluster might be optional, don't treat its absence as a fatal error here
+                 const targetData = data.chatroom || data; // Reference the object where details were expected
+                 const missing = [];
+                 if (!targetData.id) missing.push("'id'");
+                 if (!targetData.pusher_details) missing.push("'pusher_details' object");
+                 else { // Only check host/key if pusher_details object exists
+                     if (!targetData.pusher_details.host) missing.push("'pusher_details.host'");
+                     if (!targetData.pusher_details.key) missing.push("'pusher_details.key'");
                  }
-                 console.log("Data structure received:", data); // Log the problematic structure
+                 if (missing.length > 0) {
+                    console.error(` -> Missing required fields: ${missing.join(', ')}.`);
+                 } else if (!data.chatroom && data.id && data.pusher_details) {
+                    // Edge case: if details were expected directly but not found, and there's no chatroom property
+                    console.error(" -> Details expected directly in 'data', but structure mismatch or fields missing.");
+                 } else if (data.chatroom && (!data.chatroom.id || !data.chatroom.pusher_details)) {
+                     // Edge case: if details were expected in 'data.chatroom' but not found
+                    console.error(" -> Details expected in 'data.chatroom', but structure mismatch or fields missing.");
+                 }
              }
+             console.log("Data structure received (logged above)."); // Refer to the raw log at the function start
              return false; // Indicate failure
         }
 
-        // If we found a valid chatroomObject containing the details
-        chatroomId = chatroomObject.id;
-        pusherKey = chatroomObject.pusher_details.key;
-        pusherHost = chatroomObject.pusher_details.host;
-        // Cluster might not always be present, handle gracefully
-        pusherCluster = chatroomObject.pusher_details.cluster || null;
-
+        // --- Proceed with WebSocket connection if details found ---
         console.log(`Using Chatroom ID: ${chatroomId} from ${sourceUrl}`);
         console.log(`Using Pusher Key: ${pusherKey}, Host: ${pusherHost}, Cluster: ${pusherCluster || 'N/A'}`);
 
-        // Construct the WebSocket URL using fetched details
-        // Include cluster if it exists, otherwise Pusher might default or not require it.
         const wsUrl = `wss://${pusherHost}/app/${pusherKey}?protocol=7&client=js&version=7.6.0&flash=false${pusherCluster ? `&cluster=${pusherCluster}` : ''}`;
-        console.log("Attempting to connect to:", wsUrl);
+        console.log("Attempting to connect to WebSocket:", wsUrl);
 
         ws = new WebSocket(wsUrl);
 
         // --- WebSocket event handlers (onopen, onmessage, onerror, onclose) ---
         ws.onopen = () => {
-            console.log("Connected to Kick chat WebSocket.");
-            displayMessage(null, `Connected to ${channel}.`, true);
-            connectButton.disabled = false;
-            connectButton.textContent = 'Connect';
+            console.log("WebSocket connection opened.");
+            displayMessage(null, `Connected to ${channel}. Subscribing to chat...`, true);
+            connectButton.disabled = false; // Re-enable button only after successful connection AND subscription attempt
+            connectButton.textContent = 'Connect'; // Reset button text
 
             ws.send(JSON.stringify({
                 event: "pusher:subscribe",
@@ -127,88 +143,136 @@ function connectWebSocket(channel) {
                 }
             }));
 
-            // Send ping every 30 seconds to keep connection alive
-            if (keepAliveInterval) clearInterval(keepAliveInterval); // Clear any previous interval
+            // Start keep-alive ping
+            if (keepAliveInterval) clearInterval(keepAliveInterval);
             keepAliveInterval = setInterval(() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({ event: "pusher:ping", data: {} }));
+                    // console.log("Sent pusher:ping"); // Optional: log ping
                 } else {
                     clearInterval(keepAliveInterval);
                     keepAliveInterval = null;
                 }
-            }, 30000);
+            }, 30000); // Send ping every 30 seconds
         };
 
         ws.onmessage = (event) => {
              try {
                 const msgData = JSON.parse(event.data);
-                 // console.log("Raw message:", msgData); // Log raw message for debugging
+                 // console.log("Raw WS message:", msgData); // Uncomment for deep debugging
 
+                // Handle Pong response to Ping
                 if (msgData.event === "pusher:pong") {
-                    return; // Ignore pong messages
-                }
-
-                if (msgData.event === "pusher_internal:subscription_succeeded") {
-                    console.log(`Successfully subscribed to channel: ${msgData.channel}`);
-                    displayMessage(null, `Subscribed to chat for ${channel}.`, true);
+                    // console.log("Received pusher:pong"); // Optional: log pong
                     return;
                 }
 
-                // Check for the correct chat message event
-                // It seems the event name might vary or there might be different structures
-                if (msgData.event === "App\\Events\\ChatMessageEvent" || msgData.event.includes("ChatMessageEvent")) { // Be flexible with event name
+                // Handle successful subscription
+                if (msgData.event === "pusher_internal:subscription_succeeded") {
+                    console.log(`Successfully subscribed to channel: ${msgData.channel}`);
+                    displayMessage(null, `Subscribed successfully. Listening for messages...`, true);
+                    return; // Don't process further
+                }
+
+                 // Handle potential subscription errors from Pusher
+                 if (msgData.event === "pusher:error") {
+                    console.error("Pusher Error:", msgData.data);
+                    let errorMsg = "Pusher error received.";
+                    if (msgData.data && msgData.data.message) {
+                        errorMsg = `Pusher Error: ${msgData.data.message} (Code: ${msgData.data.code || 'N/A'})`;
+                    }
+                    displayMessage(null, errorMsg, false, true);
+                    // Optionally close the connection or handle specific error codes
+                    // For example, code 4009 often means connection limit or auth issue
+                    if (ws && (msgData.data?.code === 4004 || msgData.data?.code === 4009 || msgData.data?.code === 4007)) {
+                        ws.close(msgData.data.code, msgData.data.message);
+                    }
+                    return;
+                 }
+
+                // Process actual chat messages
+                if (msgData.event === "App\\Events\\ChatMessageEvent") {
                     try {
-                        // The actual message payload is often nested within the 'data' field,
-                        // which itself is a JSON string.
                         const messagePayload = JSON.parse(msgData.data);
-                        // console.log("Parsed message data:", messagePayload); // Log parsed message
+                        // console.log("Parsed chat message data:", messagePayload); // Uncomment for debugging message structure
                         if (messagePayload.sender && messagePayload.content) {
-                             // Check if content is an object/array (like for polls/gifts) and skip or format differently if needed
                             if (typeof messagePayload.content === 'string') {
                                 displayMessage(messagePayload.sender.username, messagePayload.content);
                             } else {
-                                console.log("Received non-string message content:", messagePayload.content);
-                                // Optionally display a placeholder or skip
-                                // displayMessage(messagePayload.sender.username, '[Unsupported message type]');
+                                console.log("Received non-string message content (e.g., poll, gift):", messagePayload.content);
+                                // Display a placeholder for non-text messages
+                                displayMessage(messagePayload.sender.username, '[System message or non-text content]');
                             }
                         } else {
-                            console.warn("Received chat message event without sender or content:", messagePayload);
+                            console.warn("Received ChatMessageEvent without expected sender or content fields:", messagePayload);
                         }
                     } catch (e) {
-                        console.error("Error parsing inner message data string:", e, msgData.data);
+                        console.error("Error parsing inner JSON data string for ChatMessageEvent:", e, msgData.data);
                         displayMessage(null, "Error parsing chat message data.", false, true);
                     }
+                } else if (msgData.event.startsWith("pusher:")) {
+                    // Log other pusher events if needed, but don't treat as errors
+                     // console.log("Received other Pusher event:", msgData.event, msgData.data ? JSON.parse(msgData.data) : '(no data)');
                 } else {
-                    // Log other event types for debugging
-                     // console.log("Received unhandled event type:", msgData.event, msgData.data ? JSON.parse(msgData.data) : '(no data)');
+                    // Log potentially unhandled non-Pusher events
+                     console.log("Received unhandled event type:", msgData.event, msgData.data ? JSON.parse(msgData.data) : '(no data)');
                 }
             } catch (e) {
                 console.error("Error processing WebSocket message:", e, event.data);
-                 displayMessage(null, "Error processing WebSocket message.", false, true);
+                 displayMessage(null, "Error processing WebSocket message (see console).", false, true);
             }
         };
 
         ws.onerror = (error) => {
-            console.error("WebSocket Error:", error);
-            displayMessage(null, "WebSocket connection error occurred. Check console.", false, true);
-            if (keepAliveInterval) clearInterval(keepAliveInterval);
-            keepAliveInterval = null;
-             connectButton.disabled = false;
-             connectButton.textContent = 'Connect';
+            // This usually fires just before onclose when there's a connection issue
+            console.error("WebSocket Error Event:", error);
+            // Displaying error in onclose is often more informative about the closure reason
+            // displayMessage(null, "WebSocket connection error occurred. See console.", false, true);
+            // Cleanup and UI update happens in onclose
         };
 
         ws.onclose = (event) => {
-            console.log(`WebSocket Disconnected. Code: ${event.code}, Reason: ${event.reason || 'No reason provided'}`);
+            console.log(`WebSocket Disconnected. Code: ${event.code}, Reason: "${event.reason || 'No reason provided'}", Was Clean: ${event.wasClean}`);
             let reasonMsg = `Disconnected from ${channel}.`;
+             let isError = !event.wasClean; // Consider unclean close an error state
+
             if (event.reason) {
                 reasonMsg += ` Reason: ${event.reason}`;
             }
-             if (event.code === 1006) {
-                reasonMsg += ` (Abnormal closure - check network or host: ${pusherHost})`;
-            } else if (event.code === 4004 || event.code === 4009 || event.code === 4007) { // Pusher specific close codes
-                 reasonMsg += ` (App key/cluster issue or connection limit)`;
+
+             // Provide more specific feedback based on common close codes
+            switch(event.code) {
+                case 1000: // Normal closure
+                     reasonMsg = `Disconnected cleanly from ${channel}.`;
+                     isError = false; // Explicitly not an error
+                    break;
+                 case 1001: // Going Away
+                     reasonMsg = `Channel closing or server shutting down for ${channel}.`;
+                     isError = false;
+                    break;
+                case 1006: // Abnormal Closure
+                    reasonMsg = `Connection to ${channel} lost unexpectedly. Check network or server status.`;
+                    // Keep isError = true (default for unclean)
+                    break;
+                 case 4000: // Generic Pusher error range start
+                 case 4004: // App key issue / Cluster mismatch
+                 case 4007: // Connection limit likely
+                 case 4009: // Connection authorized failed (might happen if auth needed later)
+                 case 4201: // Rate limited
+                 case 4301: // Too many connections
+                     reasonMsg = `Connection closed by server (${event.code}): ${event.reason || 'Pusher error'}. Check API key, cluster, or connection limits.`;
+                     isError = true; // Treat Pusher errors as errors
+                    break;
+                default:
+                     if (!event.wasClean) {
+                         reasonMsg += ` (Code: ${event.code})`;
+                     }
+                     break; // Use default message for other codes
             }
-            displayMessage(null, reasonMsg, event.wasClean, !event.wasClean); // Show as error if not clean close
+
+            displayMessage(null, reasonMsg, !isError, isError); // Display as status or error
+
+            // Cleanup
             if (keepAliveInterval) clearInterval(keepAliveInterval);
             keepAliveInterval = null;
             ws = null; // Ensure ws is null after closing
@@ -217,66 +281,84 @@ function connectWebSocket(channel) {
         };
         // --- End of WebSocket event handlers ---
 
-        return true; // Indicate success
+        return true; // Indicate successful initiation of connection attempt
     };
 
-    // Try fetching chatroom details directly first
+    // --- Fetching Logic ---
+    // Try the dedicated chatroom endpoint first
     const chatroomUrl = `https://kick.com/api/v2/channels/${channel}/chatroom`;
     fetch(chatroomUrl)
         .then(response => {
+            console.log(`Fetch response from ${chatroomUrl} - Status: ${response.status}`);
             if (!response.ok) {
-                throw new Error(`Failed to fetch chatroom data from ${chatroomUrl} (Status: ${response.status})`);
+                // Log response text for non-JSON errors (like 404 Not Found)
+                return response.text().then(text => {
+                     console.error(`Error response text from ${chatroomUrl}: ${text}`);
+                     throw new Error(`Failed to fetch chatroom data from ${chatroomUrl} (Status: ${response.status})`);
+                });
             }
+            // Only attempt to parse JSON if response is OK
             return response.json();
         })
         .then(chatroomData => {
+             // Attempt to process the data from the chatroom endpoint
             if (processChatroomDataAndConnect(chatroomData, chatroomUrl)) {
-                // Success using the direct chatroom endpoint
-                return; // Exit the promise chain here
+                // If processing is successful (meaning details found and WS connection initiated)
+                console.log(`Successfully initiated connection using ${chatroomUrl}`);
+                return; // Exit the promise chain here, connection is handled by WS events
             } else {
-                // If processing failed, throw an error to trigger the fallback/catch block
-                throw new Error(`Could not process chatroom data from ${chatroomUrl}.`);
+                // If processing failed (details not found in the expected structure)
+                throw new Error(`Could not process/find required details in data from ${chatroomUrl}.`);
             }
         })
         .catch(error1 => {
-            console.warn(`Failed to fetch/process from ${chatroomUrl}:`, error1.message, "Trying fallback URL...");
-            // Fallback to the original channel endpoint
+            // This catches errors from fetch OR from the processing step above
+            console.warn(`Attempt 1 (${chatroomUrl}) failed: ${error1.message}. Trying fallback URL...`);
+
+            // Fallback: Try the general channel endpoint (less likely to contain pusher details based on recent logs, but kept as a fallback)
             const channelUrl = `https://kick.com/api/v2/channels/${channel}`;
             return fetch(channelUrl)
                 .then(response => {
+                    console.log(`Fetch response from ${channelUrl} - Status: ${response.status}`);
                     if (!response.ok) {
-                        throw new Error(`Failed to fetch channel data from ${channelUrl} (Status: ${response.status})`);
+                         return response.text().then(text => {
+                             console.error(`Error response text from ${channelUrl}: ${text}`);
+                             throw new Error(`Failed to fetch channel data from ${channelUrl} (Status: ${response.status})`);
+                         });
                     }
                     return response.json();
                 })
                 .then(channelData => {
-                     console.log(`Received data from ${channelUrl}:`, channelData); // Log the full response for the fallback
-
-                    // Need to navigate down to the chatroom object in this response structure
-                    if (!channelData || !channelData.chatroom) {
-                         throw new Error(`Could not find chatroom object in response from ${channelUrl}`);
+                    // Attempt to process data from the channel endpoint
+                    // Pass the entire channelData, as the processing function now checks both root and nested 'chatroom' properties
+                    if (processChatroomDataAndConnect(channelData, channelUrl)) {
+                        console.log(`Successfully initiated connection using fallback ${channelUrl}`);
+                        // Connection initiated, exit promise chain
+                    } else {
+                         throw new Error(`Could not process/find required details in data from ${channelUrl}.`);
                     }
-                    // Pass the chatroom sub-object to the processing function
-                    if (!processChatroomDataAndConnect(channelData.chatroom, channelUrl)) {
-                         throw new Error(`Could not process chatroom data from ${channelUrl}.`);
-                    }
-                     // If successful here, the function handles the rest
                 })
                 .catch(error2 => {
-                    // This catches errors from both the first and second fetch/processing attempts
-                    console.error("Error during channel/chatroom fetch or connection setup:", error2);
-                    let finalErrorMessage = `Error: Could not retrieve valid chatroom/Pusher details for '${channel}'.`;
-                    // Append specific error messages if available
-                    if (error1.message) finalErrorMessage += `\nAttempt 1: ${error1.message}`;
-                    if (error2.message && error2.message !== error1.message) finalErrorMessage += `\nAttempt 2: ${error2.message}`;
-                    finalErrorMessage += "\nPlease check the channel name and Kick API status.";
+                    // This catches errors from the SECOND fetch/processing attempt
+                    console.error("Fallback attempt failed:", error2.message);
+
+                    // Combine error messages for a clearer final status
+                    let finalErrorMessage = `Error: Could not retrieve valid chatroom/Pusher details for '${channel}' after trying multiple endpoints.`;
+                     finalErrorMessage += `\nAttempt 1 (${chatroomUrl}): ${error1.message}`;
+                     finalErrorMessage += `\nAttempt 2 (${channelUrl}): ${error2.message}`;
+                    finalErrorMessage += "\nPlease verify the channel name exists and check the browser console for detailed logs (network tab might also be helpful). Kick API structure might have changed.";
 
                     displayMessage(null, finalErrorMessage, false, true);
+
+                    // Ensure UI is reset after all attempts fail
                     connectButton.disabled = false;
                     connectButton.textContent = 'Connect';
                     if (keepAliveInterval) clearInterval(keepAliveInterval);
                     keepAliveInterval = null;
-                    ws = null; // Ensure ws is null after failure
+                    if (ws && ws.readyState !== WebSocket.CLOSED) {
+                         ws.close(); // Ensure any partially opened socket is closed
+                    }
+                    ws = null;
                 });
         });
 }
@@ -286,13 +368,21 @@ connectButton.addEventListener('click', () => {
     if (newChannelName) {
         channelName = newChannelName;
         channelInput.value = channelName; // Update input field if modified (e.g., trimmed)
-        connectWebSocket(channelName);
+        // Close existing connection cleanly before starting a new one
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            console.log("Closing previous WebSocket connection before connecting to new channel.");
+             displayMessage(null, `Disconnecting from previous channel...`, true);
+             ws.close(1000, "User initiated new connection"); // Normal closure
+             // Wait a very short moment for close event to potentially fire and clean up before connecting again
+             setTimeout(() => connectWebSocket(channelName), 100);
+        } else {
+            connectWebSocket(channelName); // No existing connection, connect directly
+        }
     } else {
         displayMessage(null, "Please enter a valid channel name.", false, true);
     }
 });
 
-// Add Enter key listener to the input field
 channelInput.addEventListener('keypress', function (e) {
     if (e.key === 'Enter') {
         connectButton.click(); // Simulate button click
