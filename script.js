@@ -60,36 +60,59 @@ function connectWebSocket(channel) {
 
     // Function to process chatroom data and connect WebSocket
     const processChatroomDataAndConnect = (data, sourceUrl) => {
-        console.log(`Received data from ${sourceUrl}:`, data); // Log the full response
+        console.log(`Received data from ${sourceUrl}. Keys:`, data ? Object.keys(data) : 'null data'); // Log top-level keys
 
-        if (!data || !data.pusher_details || !data.pusher_details.host || !data.pusher_details.key || !data.id) {
-            console.error(`Could not find required chatroom or Pusher details in response from ${sourceUrl}. Missing:`,
-                !data ? 'data' : '',
-                !data?.id ? 'chatroom id' : '',
-                !data?.pusher_details ? 'pusher_details' : '',
-                !data?.pusher_details?.host ? 'pusher_details.host' : '',
-                !data?.pusher_details?.key ? 'pusher_details.key' : ''
-            );
-            // Don't throw immediately, allow fallback if this was the first attempt
-            return false; // Indicate failure to process
+        let chatroomObject = null;
+        let chatroomId = null;
+        let pusherKey = null;
+        let pusherHost = null;
+        let pusherCluster = null;
+
+        // Try finding the necessary details
+        if (data && data.pusher_details && data.id) { // Case 1: Details are at the top level (e.g., from /chatroom endpoint)
+            console.log("Found pusher_details at the top level.");
+            chatroomObject = data;
+        } else if (data && data.chatroom && data.chatroom.pusher_details && data.chatroom.id) { // Case 2: Details are inside data.chatroom (e.g., from /channel endpoint)
+            console.log("Found pusher_details inside data.chatroom.");
+            console.log("data.chatroom keys:", data.chatroom ? Object.keys(data.chatroom) : 'null data.chatroom'); // Log chatroom keys
+            chatroomObject = data.chatroom;
+        } else {
+             // Log detailed error about missing parts
+             console.error(`Could not find required chatroom or Pusher details in response from ${sourceUrl}.`);
+             if (!data) {
+                 console.error(" -> 'data' is missing or null.");
+             } else {
+                 const potentialChatroom = data.chatroom || data; // Check both possible locations
+                 if (!potentialChatroom.id) console.error(" -> Required 'id' is missing.");
+                 if (!potentialChatroom.pusher_details) console.error(" -> Required 'pusher_details' object is missing.");
+                 else { // If pusher_details exists, check host/key
+                     if (!potentialChatroom.pusher_details.host) console.error(" -> 'pusher_details.host' is missing.");
+                     if (!potentialChatroom.pusher_details.key) console.error(" -> 'pusher_details.key' is missing.");
+                     // Cluster might be optional, don't treat its absence as a fatal error here
+                 }
+                 console.log("Data structure received:", data); // Log the problematic structure
+             }
+             return false; // Indicate failure
         }
 
-        const chatroomId = data.id;
-        const pusherKey = data.pusher_details.key;
-        const pusherHost = data.pusher_details.host;
-        const pusherCluster = data.pusher_details.cluster; // Extract cluster
+        // If we found a valid chatroomObject containing the details
+        chatroomId = chatroomObject.id;
+        pusherKey = chatroomObject.pusher_details.key;
+        pusherHost = chatroomObject.pusher_details.host;
+        // Cluster might not always be present, handle gracefully
+        pusherCluster = chatroomObject.pusher_details.cluster || null;
 
-        console.log(`Found chatroom ID: ${chatroomId} from ${sourceUrl}`);
-        console.log(`Using Pusher Key: ${pusherKey}, Host: ${pusherHost}, Cluster: ${pusherCluster}`);
+        console.log(`Using Chatroom ID: ${chatroomId} from ${sourceUrl}`);
+        console.log(`Using Pusher Key: ${pusherKey}, Host: ${pusherHost}, Cluster: ${pusherCluster || 'N/A'}`);
 
         // Construct the WebSocket URL using fetched details
-        const wsUrl = `wss://${pusherHost}/app/${pusherKey}?protocol=7&client=js&version=7.6.0&flash=false`;
+        // Include cluster if it exists, otherwise Pusher might default or not require it.
+        const wsUrl = `wss://${pusherHost}/app/${pusherKey}?protocol=7&client=js&version=7.6.0&flash=false${pusherCluster ? `&cluster=${pusherCluster}` : ''}`;
         console.log("Attempting to connect to:", wsUrl);
 
         ws = new WebSocket(wsUrl);
 
         // --- WebSocket event handlers (onopen, onmessage, onerror, onclose) ---
-        // These remain largely the same as before, just moved inside this scope
         ws.onopen = () => {
             console.log("Connected to Kick chat WebSocket.");
             displayMessage(null, `Connected to ${channel}.`, true);
@@ -100,7 +123,7 @@ function connectWebSocket(channel) {
                 event: "pusher:subscribe",
                 data: {
                     auth: "",
-                    channel: `chatrooms.${chatroomId}.v2`
+                    channel: `chatrooms.${chatroomId}.v2` // Use the dynamically found chatroomId
                 }
             }));
 
