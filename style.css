@@ -45,12 +45,20 @@ h1, h2 {
     border: none;
     border-radius: 4px;
     cursor: pointer;
-    transition: background-color 0.3s ease;
+    transition: background-color 0.3s ease, opacity 0.3s ease;
+    white-space: nowrap; /* Prevent text wrapping when label changes */
 }
 
-#connect-button:hover {
+#connect-button:hover:not(:disabled) {
     background-color: #45a049;
 }
+
+#connect-button:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
 
 #chat-messages {
     margin-top: 20px;
@@ -65,36 +73,53 @@ h1, h2 {
     padding: 10px;
     background-color: #f9f9f9;
     border-radius: 4px;
+    /* Improve scrolling behavior */
+    scroll-behavior: smooth;
 }
 
 .message {
     margin-bottom: 10px;
-    padding: 8px;
+    padding: 8px 12px; /* Adjusted padding */
     background-color: #e7f3e7;
     border-radius: 4px;
     border-left: 3px solid #4CAF50;
+    word-wrap: break-word; /* Ensure long words/messages wrap */
+    line-height: 1.4; /* Improve readability */
 }
 
 .message .username {
     font-weight: bold;
     color: #388e3c;
+    margin-right: 5px; /* Add space between username and message */
 }
 
 .message .content {
-    margin-left: 5px;
+    /* Ensure content breaks nicely */
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
-.error-message {
-    color: #d32f2f;
-    font-weight: bold;
-    margin-top: 10px;
+/* Specific styles for status/error messages */
+.status-message, .error-message {
+    background-color: transparent; /* Remove default message background */
+    border-left: none; /* Remove default border */
     text-align: center;
+    font-style: italic;
+    margin: 10px 0;
+    padding: 5px;
 }
 
 .status-message {
-    color: #1976d2;
-    font-style: italic;
-    margin-top: 10px;
-    text-align: center;
+    color: #1976d2; /* Blue for status */
 }
 
+.error-message {
+    color: #d32f2f; /* Red for errors */
+    font-weight: bold;
+    background-color: #ffdddd; /* Light red background for errors */
+    border-left: 3px solid #d32f2f; /* Red border for errors */
+    border-radius: 4px;
+    text-align: left; /* Align error text left for consistency */
+    font-style: normal; /* Override italic */
+    padding: 8px 12px;
+}
